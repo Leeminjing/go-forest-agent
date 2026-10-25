@@ -4,7 +4,30 @@
 
 Agent、Model、Tool、Checkpoint、Event、Approval 都是普通 Tree，通过声明的 Port 和本地 Link 组合。Forest Core 无 Agent 专属逻辑。本阶段不接入或替换 Focus，不创建 Focus-Go 产品。
 
-在外部 Go 模块中使用固定版本：`go get github.com/Leeminjing/go-forest-agent/agent@v0.1.0`。
+在外部 Go 模块中使用固定版本：`go get github.com/Leeminjing/go-forest-agent/agent@v0.2.0`。已有 v0.1.0 标签保持不变。
+
+## 可选 Responses 模型树
+
+`trees/openairesponses` 实现原有消费方 `agent.Model` 接口，`trees/responsejournal` 实现适配器声明的 Journal 契约。HTTP/SSE、模型配置、工具调用和原生续接都在可选树内，Agent 状态机与 Forest Core 不含供应商分支。
+
+```go
+config := openairesponses.Config{
+    APIKey: os.Getenv("OPENAI_API_KEY"),
+    Model: os.Getenv("OPENAI_MODEL"),
+    Instructions: "Use the connected tools; report only verified results.",
+}
+// Register both ordinary Definitions and connect model.journal to journal.journal.
+modelDefinition := openairesponses.Definition(config)
+journalDefinition := responsejournal.Definition("data/responses")
+```
+
+默认请求 `https://api.openai.com/v1/responses`；Endpoint 只由可信宿主配置，也可以指定确实支持所需 Responses 协议的兼容端点。没有 Chat Completions 回退。请求使用自定义 function tools、stream、store=false 和禁用隐式截断；不安装供应商内置 Shell/MCP/网络工具，不自动重试 POST。供应商可能不支持所有请求参数，必须按实际端点验收。本次联网验证使用用户明确指定的 DeepSeek Responses，不能视为 OpenAI 托管服务验证。
+
+临时文本通过现有 emit 回调发送，只有完整响应才返回可执行的工具计划。拒绝、未完成、断流、未知输出或只有 commentary 的响应不会伪装成最终回答；Context/回调错误会终止流。取消 HTTP 不承诺远端没有产生费用。
+
+Journal 在返回模型结果前保存完整原生输出，包括 reasoning 和 phase；当前 Run 后续请求重放这些项并追加工具结果。标准 Agent 消息只是消费视图。相同请求 fingerprint 已保存时直接返回原结果；必需记录缺失、损坏或消息前缀不匹配时失败，不丢弃续接数据后重发。兼容端点的明文 reasoning 仅作为原生记录保存，不通过文本回调或业务回答暴露。
+
+Journal 使用不可覆盖序号文件、SHA256 和原子硬链接，需支持硬链接的本地文件系统；不覆盖损坏记录或回退旧记录。原生记录最多 8 MiB，单 Run 链最多 32 MiB；不承诺断电耐久性或 API exactly-once。API key 不进入 profile、记录、事件和错误正文。Query/归档可使用 Journal.Load 获取脱离存储的完整副本。
 
 ## 运行示例
 
