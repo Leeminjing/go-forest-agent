@@ -1,0 +1,8 @@
+[sS][pP][eE][cC].md
+[dD][eE][sS][iI][gG][nN].md
+.scratch/
+.env
+*.exe
+*.test
+coverage.out
+checkpoints/
