@@ -44,6 +44,8 @@ Windows 完整测试及 vet 通过。Linux Go 1.23 使用 Docker 执行 race；�
 
 CI 同时在 Go 1.23 Windows/Linux 执行 vet、测试与双进程示例；Linux 执行三轮 race。
 
+实现提交 e0e73ff 的 [GitHub Actions](https://github.com/Leeminjing/go-forest-agent/actions/runs/40163698612) 全部通过。独立 Go 模块实际从远程下载 `github.com/Leeminjing/go-forest-agent@v0.0.0-20261025045553-e0e73ff021aa`，同时下载 go-forest v0.3.0，导入执行器及 scriptedmodel 包并运行成功，未使用 replace。
+
 ## 边界
 
 本阶段只完成独立扩展；不接入 Focus Context、不修改 Python Focus、不创建 Focus-Go。没有供应商 API、分布式租约、自动工具重放或 exactly-once 声明。管理恢复要求宿主已确认旧执行者停止。运行中的普通业务仍依赖 Context 协作取消。审查记录见 review.md。

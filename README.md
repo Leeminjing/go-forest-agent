@@ -4,6 +4,8 @@
 
 Agent、Model、Tool、Checkpoint、Event、Approval 都是普通 Tree，通过声明的 Port 和本地 Link 组合。Forest Core 无 Agent 专属逻辑。本阶段不接入或替换 Focus，不创建 Focus-Go 产品。
 
+在外部 Go 模块中使用当前原型：`go get github.com/Leeminjing/go-forest-agent/agent@main`。尚未发布 Agent 扩展的稳定版本标签。
+
 ## 运行示例
 
 ```sh
