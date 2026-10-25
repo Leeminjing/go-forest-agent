@@ -1,0 +1,22 @@
+name: Go
+on:
+  push:
+  pull_request:
+jobs:
+  test:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23.x'
+          cache: true
+      - run: go vet ./...
+      - run: go test ./... -timeout 90s
+      - if: runner.os == 'Linux'
+        run: go test -race ./... -count=3 -timeout 120s
+      - run: go run ./examples/agent-loop -directory .scratch/ci-example -id ci
+      - run: go run ./examples/agent-loop -directory .scratch/ci-example -id ci -approve -model-version 2
