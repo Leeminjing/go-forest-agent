@@ -7,6 +7,7 @@
 | 行为 | 自动化证据 |
 | --- | --- |
 | Model → Tool → Model，结果保存后不重放 | TestModelToolModelDurableEventsAndNoReplay：完整循环完成；重新组合森林读取同一检查点，工具计数仍为 1。 |
+| 多工具计划的顺序恢复 | TestMultiplePlannedToolsResumeInOrderWithoutReplayingSavedPrefix：一轮模型提出两个调用，保存第一个结果后创建新森林，按原顺序只执行第二个调用，最终总计两次。 |
 | 每步版本边界与模型热替换 | TestEachStepSeesNewModelAndOldScopeDrains：阻塞旧模型，替换后旧实例仍未 Stop；释放旧调用后，后续模型步骤使用新版本；旧资源最后退出。已有 Scope 中驱动 Continue 被拒绝。 |
 | 审批暂停、拒绝与恢复 | TestApprovalRestartDenialAndChangedToolIdentity：新森林载入暂停状态，批准后继续；工具变化使旧批准失效；过时 Revision 不能批准新的暂停；拒绝后工具计数不变。 |
 | 工具已执行但结果保存失败 | TestToolResultWriteFailureRequiresExplicitResolution：注入结果写入失败，持久记录仍是 tool-running；Recover 进入 unknown，不重放；显式 Resolve 后继续。 |

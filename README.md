@@ -4,7 +4,7 @@
 
 Agent、Model、Tool、Checkpoint、Event、Approval 都是普通 Tree，通过声明的 Port 和本地 Link 组合。Forest Core 无 Agent 专属逻辑。本阶段不接入或替换 Focus，不创建 Focus-Go 产品。
 
-在外部 Go 模块中使用当前原型：`go get github.com/Leeminjing/go-forest-agent/agent@main`。尚未发布 Agent 扩展的稳定版本标签。
+在外部 Go 模块中使用固定版本：`go get github.com/Leeminjing/go-forest-agent/agent@v0.1.0`。
 
 ## 运行示例
 
@@ -36,6 +36,8 @@ run, err := agent.Continue(ctx, f, "agent", "run-1")
 Continue 在每个 Advance 建立并释放独立 Scope。当前步骤使用固定版本；模型替换后的后续步骤可以使用新版本。暂停和重启都不持有旧 Scope，不将 Generation 当作可跨重启恢复的执行上下文。在已有 Scope 中调用 Continue 返回 ErrNestedScope。
 
 Runtime 需要 model、checkpoint、events、approval 四个必需端口；tools 为可选多值端口。Checkpoint 是构造期资源依赖，不能在保留 Runtime 时悄悄换成另一个存储。示例展示完整注册和 ChangePlan 接线。
+
+Tool.Describe 与 Approval.Check 是准入前查询，提供者不应在这些方法中执行工具业务副作用。模型和工具执行的准入分别由 Generate/Execute 之前的持久状态保护；事件使用持久记录与幂等投递。
 
 ## 检查点和工具副作用
 
