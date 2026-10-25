@@ -4,7 +4,9 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
+	"net"
 	"strings"
 )
 
@@ -103,6 +105,10 @@ func readStream(ctx context.Context, body io.Reader, emit func(string) error) (c
 		if readErr != nil {
 			if ctx.Err() != nil {
 				return completion{}, ctx.Err()
+			}
+			var timeout net.Error
+			if errors.As(readErr, &timeout) && timeout.Timeout() {
+				return completion{}, context.DeadlineExceeded
 			}
 			return completion{}, ErrProtocol
 		}

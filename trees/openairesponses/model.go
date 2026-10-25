@@ -182,7 +182,9 @@ func (m *Model) Generate(ctx context.Context, request agent.ModelRequest, emit f
 	if err != nil || len(data) > MaxRecordBytes {
 		return agent.ModelResult{}, ErrProtocol
 	}
-	httpRequest, err := http.NewRequestWithContext(ctx, http.MethodPost, m.config.Endpoint, bytes.NewReader(data))
+	requestCtx, cancel := context.WithTimeout(ctx, m.config.Timeout)
+	defer cancel()
+	httpRequest, err := http.NewRequestWithContext(requestCtx, http.MethodPost, m.config.Endpoint, bytes.NewReader(data))
 	if err != nil {
 		return agent.ModelResult{}, ErrProtocol
 	}
@@ -191,8 +193,8 @@ func (m *Model) Generate(ctx context.Context, request agent.ModelRequest, emit f
 	httpRequest.Header.Set("Accept", "text/event-stream")
 	response, err := m.client.Do(httpRequest)
 	if err != nil {
-		if ctx.Err() != nil {
-			return agent.ModelResult{}, ctx.Err()
+		if requestCtx.Err() != nil {
+			return agent.ModelResult{}, requestCtx.Err()
 		}
 		var netErr net.Error
 		if errors.As(err, &netErr) && netErr.Timeout() {
@@ -207,7 +209,7 @@ func (m *Model) Generate(ctx context.Context, request agent.ModelRequest, emit f
 	if !strings.HasPrefix(response.Header.Get("Content-Type"), "text/event-stream") {
 		return agent.ModelResult{}, ErrProtocol
 	}
-	completed, err := readStream(ctx, response.Body, emit)
+	completed, err := readStream(requestCtx, response.Body, emit)
 	if err != nil {
 		return agent.ModelResult{}, err
 	}
