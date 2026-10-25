@@ -24,14 +24,19 @@ func (f modelFunc) Generate(ctx context.Context, r agent.ModelRequest, emit func
 }
 
 type testTool struct {
-	version  string
-	approval bool
-	calls    *atomic.Int32
-	execute  func(context.Context, agent.ToolRequest) (string, error)
+	version    string
+	approval   bool
+	parameters json.RawMessage
+	calls      *atomic.Int32
+	execute    func(context.Context, agent.ToolRequest) (string, error)
 }
 
 func (t *testTool) Describe(context.Context) (agent.ToolSpec, error) {
-	return agent.ToolSpec{Name: "add", Version: t.version, Parameters: json.RawMessage(`{"type":"object"}`), NeedsApproval: t.approval}, nil
+	parameters := t.parameters
+	if parameters == nil {
+		parameters = json.RawMessage(`{"type":"object"}`)
+	}
+	return agent.ToolSpec{Name: "add", Version: t.version, Parameters: parameters, NeedsApproval: t.approval}, nil
 }
 func (t *testTool) Execute(ctx context.Context, r agent.ToolRequest) (string, error) {
 	t.calls.Add(1)
@@ -250,12 +255,12 @@ func TestApprovalRestartDenialAndChangedToolIdentity(t *testing.T) {
 	}
 	x2 := setup(t, directory, toolModel("done"), tool, nil, agent.Options{})
 	if _, err := x2.manage(func(ctx context.Context, e agent.Executor) (agent.Run, error) {
-		return e.Decide(ctx, "approval", "wrong", agent.Granted)
+		return e.Decide(ctx, "approval", run.Revision, "wrong", agent.Granted)
 	}); !errors.Is(err, agent.ErrInvalid) {
 		t.Fatal(err)
 	}
 	if _, err := x2.manage(func(ctx context.Context, e agent.Executor) (agent.Run, error) {
-		return e.Decide(ctx, "approval", "call-1", agent.Granted)
+		return e.Decide(ctx, "approval", run.Revision, "call-1", agent.Granted)
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -266,11 +271,17 @@ func TestApprovalRestartDenialAndChangedToolIdentity(t *testing.T) {
 	if _, err := x2.f.Apply(context.Background(), forest.ChangePlan{BaseGeneration: 1, Operations: []forest.Operation{forest.Replace("tool", newTool.Ref(), false)}}); err != nil {
 		t.Fatal(err)
 	}
-	if run, err := agent.Continue(context.Background(), x2.f, "agent", "approval"); err != nil || run.Status != agent.AwaitingApproval || calls.Load() != 0 {
-		t.Fatal("old approval reused", run, err)
+	paused, err := agent.Continue(context.Background(), x2.f, "agent", "approval")
+	if err != nil || paused.Status != agent.AwaitingApproval || calls.Load() != 0 {
+		t.Fatal("old approval reused", paused, err)
 	}
 	if _, err := x2.manage(func(ctx context.Context, e agent.Executor) (agent.Run, error) {
-		return e.Decide(ctx, "approval", "call-1", agent.Granted)
+		return e.Decide(ctx, "approval", run.Revision, "call-1", agent.Granted)
+	}); !errors.Is(err, agent.ErrConflict) {
+		t.Fatal("stale approval accepted", err)
+	}
+	if _, err := x2.manage(func(ctx context.Context, e agent.Executor) (agent.Run, error) {
+		return e.Decide(ctx, "approval", paused.Revision, "call-1", agent.Granted)
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -278,11 +289,12 @@ func TestApprovalRestartDenialAndChangedToolIdentity(t *testing.T) {
 		t.Fatal(run, err)
 	}
 	x2.create(t, "denied")
-	if _, err := agent.Continue(context.Background(), x2.f, "agent", "denied"); err != nil {
+	denied, err := agent.Continue(context.Background(), x2.f, "agent", "denied")
+	if err != nil {
 		t.Fatal(err)
 	}
 	if run, err := x2.manage(func(ctx context.Context, e agent.Executor) (agent.Run, error) {
-		return e.Decide(ctx, "denied", "call-1", agent.Denied)
+		return e.Decide(ctx, "denied", denied.Revision, "call-1", agent.Denied)
 	}); err != nil || run.Status != agent.Failed {
 		t.Fatal(run, err)
 	}

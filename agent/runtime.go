@@ -43,11 +43,12 @@ func (r *runtime) save(ctx context.Context, run *Run) error {
 	// known outcome even when the business caller has canceled its own Context.
 	commitCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), r.options.CommitTimeout)
 	defer cancel()
-	next := clone(*run)
+	next := *run
 	next.Revision++
 	if err := next.Validate(); err != nil {
 		return err
 	}
+	next = clone(next)
 	err := r.checkpoint.Use(commitCtx, func(c Checkpoint) error { return c.CompareAndSwap(commitCtx, run.ID, run.Revision, next) })
 	if err != nil {
 		return errors.Join(ErrCheckpoint, err)
@@ -76,7 +77,7 @@ func (r *runtime) flush(ctx context.Context, run *Run) error {
 	return nil
 }
 func (r *runtime) Create(ctx context.Context, id, prompt string) (Run, error) {
-	if id == "" || len(id) > 256 || prompt == "" || len(prompt) > 1<<20 {
+	if id == "" || len(id) > 256 || prompt == "" || len(prompt) > 1<<20 || !validText(id, prompt) {
 		return Run{}, ErrInvalid
 	}
 	if err := ctx.Err(); err != nil {
@@ -144,11 +145,11 @@ func (r *runtime) catalog(ctx context.Context) ([]ToolSpec, error) {
 	err := r.tools.UseAll(ctx, func(tools []Tool) error {
 		seen := map[string]bool{}
 		for _, tool := range tools {
-			spec, err := tool.Describe(ctx)
+			spec, err := safeCall(func() (ToolSpec, error) { return tool.Describe(ctx) })
 			if err != nil {
 				return err
 			}
-			if spec.Name == "" || spec.Version == "" || !json.Valid(spec.Parameters) || seen[spec.Name] || len(specs) >= 64 {
+			if !validToolSpec(spec) || seen[spec.Name] || len(specs) >= 64 {
 				return ErrInvalid
 			}
 			seen[spec.Name] = true
@@ -205,7 +206,7 @@ func (r *runtime) modelStep(ctx context.Context, run *Run) error {
 				}
 				deltas++
 				deltaBytes += len(text)
-				if deltas > 4096 || len(text) > 1<<20 || deltaBytes > 4<<20 {
+				if deltas > 4096 || len(text) > 1<<20 || deltaBytes > 4<<20 || !validText(text) {
 					streamErr = ErrInvalid
 					return streamErr
 				}
@@ -263,7 +264,7 @@ func (r *runtime) modelStep(ctx context.Context, run *Run) error {
 	return r.save(ctx, run)
 }
 func validateResult(run Run, result ModelResult, specs []ToolSpec) error {
-	if len(result.Calls) > 16 || len(run.Messages) > 512 || len(result.Content) > 1<<20 {
+	if len(result.Calls) > 16 || len(run.Messages) > 512 || len(result.Content) > 1<<20 || !validText(result.Content) {
 		return ErrInvalid
 	}
 	seen := map[string]bool{}
@@ -273,7 +274,7 @@ func validateResult(run Run, result ModelResult, specs []ToolSpec) error {
 		}
 	}
 	for _, call := range result.Calls {
-		if call.ID == "" || len(call.ID) > 256 || seen[call.ID] || len(call.Arguments) > 1<<20 || !json.Valid(call.Arguments) {
+		if call.ID == "" || len(call.ID) > 256 || !validText(call.ID, call.Name) || seen[call.ID] || len(call.Arguments) > 1<<20 || !validJSON(call.Arguments) {
 			return ErrInvalid
 		}
 		seen[call.ID] = true
@@ -300,11 +301,14 @@ func (r *runtime) toolStep(ctx context.Context, run *Run) error {
 		var selected Tool
 		var actual ToolSpec
 		for _, tool := range tools {
-			spec, err := tool.Describe(ctx)
+			spec, err := safeCall(func() (ToolSpec, error) { return tool.Describe(ctx) })
 			if err != nil {
 				return err
 			}
 			if spec.Name == pending.Call.Name {
+				if !validToolSpec(spec) {
+					return ErrInvalid
+				}
 				if selected != nil {
 					return ErrInvalid
 				}
@@ -368,6 +372,9 @@ func (r *runtime) toolStep(ctx context.Context, run *Run) error {
 		result, err := safeCall(func() (string, error) {
 			return selected.Execute(ctx, clone(ToolRequest{RunID: run.ID, Call: pending.Call}))
 		})
+		if err == nil && (!validText(result) || len(result) > 1<<20) {
+			err = ErrInvalid
+		}
 		if err != nil {
 			run.Status = OutcomeUnknown
 			addEvent(run, "tool.unknown", "", pending.Call.ID)
@@ -393,10 +400,13 @@ func (r *runtime) toolStep(ctx context.Context, run *Run) error {
 	})
 }
 
-func (r *runtime) Decide(ctx context.Context, id, callID string, decision Decision) (Run, error) {
+func (r *runtime) Decide(ctx context.Context, id string, expectedRevision uint64, callID string, decision Decision) (Run, error) {
 	run, err := r.Read(ctx, id)
 	if err != nil {
 		return Run{}, err
+	}
+	if run.Revision != expectedRevision {
+		return run, ErrConflict
 	}
 	if run.Status != AwaitingApproval || run.Current >= len(run.Calls) || run.Current < 0 || run.Calls[run.Current].Call.ID != callID || (decision != Granted && decision != Denied) {
 		return run, ErrInvalid
@@ -435,6 +445,9 @@ func (r *runtime) Recover(ctx context.Context, id string) (Run, error) {
 	return run, err
 }
 func (r *runtime) Resolve(ctx context.Context, id, callID, result string) (Run, error) {
+	if !validText(result) || len(result) > 1<<20 {
+		return Run{}, ErrInvalid
+	}
 	run, err := r.Read(ctx, id)
 	if err != nil {
 		return Run{}, err

@@ -43,7 +43,7 @@ Runtime 需要 model、checkpoint、events、approval 四个必需端口；tools
 
 unknown 状态必须由宿主核实外部结果，再通过 Resolve 提供已知结果。Resolve 不重新执行工具；没有“盲目重试工具”的便捷入口。Decide 和 Resolve 是受信宿主的管理 API，接入 HTTP/产品时必须由宿主做身份认证和授权。
 
-审批绑定当前调用 ID、参数及完整 ToolSpec。工具版本或说明改变会清除旧批准并重新检查。工具参数的业务校验由 Tool 实现；模型只能请求已连接的工具。任何工具 error 都保守地视为结果未知，包括可能尚未产生副作用的参数错误。
+审批绑定当前调用 ID、参数及完整 ToolSpec。Decide 必须携带操作者观察到的 Revision，过时返回 ErrConflict；工具版本或说明改变会清除旧批准并重新检查。工具参数的业务校验由 Tool 实现；模型只能请求已连接的工具。任何工具 error 都保守地视为结果未知，包括可能尚未产生副作用的参数错误。
 
 文件检查点按 Run ID 的 SHA256 分目录，追加不可覆盖的 revision 文件：写入临时文件、fsync，再以原子硬链接发布。需要支持硬链接的本地文件系统；不支持时返回错误，无非原子覆盖降级。最高 revision 损坏会返回 ErrCorrupt，不回退旧状态。Windows 验证进程终止恢复，不承诺断电持久性；不提供分布式事务、加密存储或不可信本地用户的沙箱。
 

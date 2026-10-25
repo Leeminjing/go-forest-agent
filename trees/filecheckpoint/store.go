@@ -16,6 +16,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/Leeminjing/go-forest-agent/agent"
 	"github.com/Leeminjing/go-forest/forest"
@@ -83,7 +84,7 @@ func (s *Store) Load(ctx context.Context, id string) (agent.Run, error) {
 	if err != nil {
 		return agent.Run{}, err
 	}
-	if len(data) > maxBytes {
+	if len(data) > maxBytes || !utf8.Valid(data) {
 		return agent.Run{}, agent.ErrCorrupt
 	}
 	var run agent.Run

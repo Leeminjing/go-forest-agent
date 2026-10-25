@@ -3,9 +3,11 @@
 package agent
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"unicode/utf8"
 )
 
 var (
@@ -54,6 +56,20 @@ type ToolSpec struct {
 	Parameters    json.RawMessage `json:"parameters"`
 	NeedsApproval bool            `json:"needs_approval"`
 }
+
+func validToolSpec(s ToolSpec) bool {
+	return s.Name != "" && len(s.Name) <= 256 && s.Version != "" && len(s.Version) <= 256 && len(s.Description) <= 1<<20 && len(s.Parameters) <= 1<<20 && validText(s.Name, s.Version, s.Description) && validJSON(s.Parameters)
+}
+func validText(values ...string) bool {
+	for _, value := range values {
+		if !utf8.ValidString(value) {
+			return false
+		}
+	}
+	return true
+}
+func validJSON(data json.RawMessage) bool { return utf8.Valid(data) && json.Valid(data) }
+
 type ModelRequest struct {
 	RunID    string
 	Messages []Message
@@ -109,7 +125,7 @@ type Run struct {
 
 // Validate checks the serialized state invariants required to safely resume.
 func (r Run) Validate() error {
-	if r.ID == "" || len(r.ID) > 256 || r.Revision == 0 || r.Current < 0 || r.Current > len(r.Calls) || r.Delivered > uint64(len(r.Events)) || len(r.Events) > 16384 {
+	if r.ID == "" || !validText(r.ID) || len(r.ID) > 256 || r.Revision == 0 || r.Current < 0 || r.Current > len(r.Calls) || r.Delivered > uint64(len(r.Events)) || len(r.Events) > 16384 {
 		return ErrCorrupt
 	}
 	switch r.Status {
@@ -130,20 +146,71 @@ func (r Run) Validate() error {
 		return ErrCorrupt
 	}
 	for i, e := range r.Events {
-		if e.RunID != r.ID || e.Sequence != uint64(i+1) || e.Temporary {
+		if e.RunID != r.ID || e.Sequence != uint64(i+1) || e.Temporary || !validText(e.Kind, e.Text, e.CallID) {
 			return ErrCorrupt
 		}
 	}
-	for i, call := range r.Calls {
-		if call.Call.ID == "" || call.Call.Name == "" || call.Tool.Name != call.Call.Name || call.Tool.Version == "" || call.Done != (i < r.Current) || !json.Valid(call.Call.Arguments) || !json.Valid(call.Tool.Parameters) {
-			return ErrCorrupt
-		}
-	}
+	seen := map[string]ToolCall{}
+	results := map[string]string{}
+	var plan []ToolCall
+	turns := 0
 	for _, message := range r.Messages {
-		for _, call := range message.Calls {
-			if !json.Valid(call.Arguments) {
+		if !validText(message.Content, message.CallID) {
+			return ErrCorrupt
+		}
+		switch message.Role {
+		case "assistant":
+			turns++
+			plan = message.Calls
+		case "tool":
+			if _, ok := seen[message.CallID]; !ok {
 				return ErrCorrupt
 			}
+			if _, ok := results[message.CallID]; ok {
+				return ErrCorrupt
+			}
+			results[message.CallID] = message.Content
+		case "user", "system":
+		default:
+			return ErrCorrupt
+		}
+		if len(message.Calls) > 0 && message.Role != "assistant" {
+			return ErrCorrupt
+		}
+		for _, call := range message.Calls {
+			if call.ID == "" || call.Name == "" || !validText(call.ID, call.Name) || !validJSON(call.Arguments) {
+				return ErrCorrupt
+			}
+			if _, ok := seen[call.ID]; ok {
+				return ErrCorrupt
+			}
+			seen[call.ID] = call
+		}
+	}
+	if r.ModelTurns != turns || turns > 128 {
+		return ErrCorrupt
+	}
+	if len(r.Calls) != len(plan) {
+		return ErrCorrupt
+	}
+	pendingIDs := map[string]bool{}
+	for i, call := range r.Calls {
+		if call.Call.ID == "" || call.Call.Name == "" || !validText(call.Call.ID, call.Call.Name, call.Result) || call.Tool.Name != call.Call.Name || !validToolSpec(call.Tool) || call.Done != (i < r.Current) || !validJSON(call.Call.Arguments) {
+			return ErrCorrupt
+		}
+		expected := plan[i]
+		if expected.ID != call.Call.ID || expected.Name != call.Call.Name || !bytes.Equal(expected.Arguments, call.Call.Arguments) {
+			return ErrCorrupt
+		}
+		value, hasResult := results[call.Call.ID]
+		if hasResult != call.Done || (hasResult && value != call.Result) {
+			return ErrCorrupt
+		}
+		pendingIDs[call.Call.ID] = true
+	}
+	for id := range seen {
+		if _, known := results[id]; !known && !pendingIDs[id] {
+			return ErrCorrupt
 		}
 	}
 	return nil
@@ -180,7 +247,7 @@ type Executor interface {
 	Create(context.Context, string, string) (Run, error)
 	Read(context.Context, string) (Run, error)
 	Advance(context.Context, string) (Run, error)
-	Decide(context.Context, string, string, Decision) (Run, error)
+	Decide(context.Context, string, uint64, string, Decision) (Run, error)
 	Recover(context.Context, string) (Run, error)
 	Resolve(context.Context, string, string, string) (Run, error)
 }
